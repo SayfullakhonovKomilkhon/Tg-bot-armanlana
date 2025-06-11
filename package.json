@@ -1,0 +1,32 @@
+{
+  "name": "wedding-rsvp-telegram-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot to receive wedding RSVP form submissions from Tilda website",
+  "main": "telegram-bot.js",
+  "scripts": {
+    "start": "node telegram-bot.js",
+    "dev": "nodemon telegram-bot.js",
+    "test": "node test-bot.js"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "wedding",
+    "rsvp",
+    "tilda",
+    "webhook"
+  ],
+  "author": "Wedding RSVP Bot",
+  "license": "MIT",
+  "dependencies": {
+    "node-telegram-bot-api": "^0.65.1",
+    "express": "^4.18.2",
+    "body-parser": "^1.20.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+} 
