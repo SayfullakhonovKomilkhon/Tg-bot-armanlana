@@ -12,10 +12,17 @@ let lastActiveChatId = null;
 // Create bot instance with robust polling options
 const bot = new TelegramBot(BOT_TOKEN, { 
     polling: {
-        interval: 1000,
-        autoStart: true,
+        interval: 2000,
+        autoStart: false,
         params: {
-            timeout: 10
+            timeout: 30,
+            allowed_updates: ["message", "callback_query"]
+        }
+    },
+    request: {
+        agentOptions: {
+            keepAlive: true,
+            family: 4
         }
     }
 });
@@ -24,14 +31,33 @@ const bot = new TelegramBot(BOT_TOKEN, {
 console.log('🤖 Starting Telegram Wedding Bot...');
 console.log('📡 Bot token:', BOT_TOKEN ? 'SET ✅' : 'NOT SET ❌');
 
-// Test bot connection
-bot.getMe().then((botInfo) => {
-    console.log(`✅ Bot connected successfully: @${botInfo.username}`);
-    console.log(`📋 Bot ID: ${botInfo.id}`);
-}).catch((error) => {
-    console.error('❌ Failed to connect to bot:', error.message);
-    console.log('💡 Check your bot token and internet connection');
-});
+// Initialize bot with proper error handling
+async function initializeBot() {
+    try {
+        // First, try to delete any existing webhook
+        await bot.deleteWebHook();
+        console.log('🗑️ Webhook cleared');
+        
+        // Test bot connection
+        const botInfo = await bot.getMe();
+        console.log(`✅ Bot connected successfully: @${botInfo.username}`);
+        console.log(`📋 Bot ID: ${botInfo.id}`);
+        
+        // Start polling manually
+        await bot.startPolling();
+        console.log('🔄 Polling started successfully');
+        
+    } catch (error) {
+        console.error('❌ Failed to initialize bot:', error.message);
+        console.log('💡 Check your bot token and internet connection');
+        
+        // Retry after delay
+        setTimeout(initializeBot, 5000);
+    }
+}
+
+// Initialize the bot
+initializeBot();
 
 // Create Express server for webhooks
 const app = express();
@@ -239,39 +265,88 @@ bot.on('message', (msg) => {
     }
 });
 
-// Enhanced error handling with auto-restart
+// Enhanced error handling with proper recovery
 bot.on('error', (error) => {
     console.error('❌ Bot error:', error.code || error.message);
     
+    // Don't restart immediately - let the bot handle it
     if (error.code === 'EFATAL' || error.code === 'ECONNRESET') {
-        console.log('🔄 Connection lost, attempting to restart bot...');
-        setTimeout(() => {
-            try {
-                bot.stopPolling();
-                setTimeout(() => {
-                    bot.startPolling();
-                    console.log('✅ Bot polling restarted');
-                }, 2000);
-            } catch (restartError) {
-                console.error('❌ Failed to restart bot:', restartError.message);
-            }
-        }, 1000);
+        console.log('🔄 Connection lost, bot will automatically retry...');
     }
 });
 
 bot.on('polling_error', (error) => {
-    console.error('❌ Polling error:', error.code || error.message);
+    const errorCode = error.code || 'UNKNOWN';
+    const errorMessage = error.message || 'Unknown error';
     
-    // Don't restart on webhook conflicts - just log
-    if (error.code === 'ETELEGRAM' && error.response?.body?.description?.includes('webhook')) {
-        console.log('⚠️ Webhook conflict detected - this is normal if using webhooks elsewhere');
-        return;
-    }
+    console.error(`❌ Polling error: ${errorCode} - ${errorMessage}`);
     
-    // For connection errors, try to restart
-    if (error.code === 'EFATAL' || error.code === 'ECONNRESET' || error.code === 'ETIMEDOUT') {
-        console.log('🔄 Network error, will retry automatically...');
+    // Handle specific error types
+    switch (errorCode) {
+        case 'ETELEGRAM':
+            if (error.response?.body?.description?.includes('webhook')) {
+                console.log('⚠️ Webhook conflict - clearing webhook and retrying...');
+                setTimeout(async () => {
+                    try {
+                        await bot.deleteWebHook();
+                        console.log('🗑️ Webhook cleared due to conflict');
+                    } catch (deleteError) {
+                        console.log('⚠️ Could not clear webhook:', deleteError.message);
+                    }
+                }, 1000);
+            } else if (error.response?.body?.description?.includes('Too Many Requests')) {
+                console.log('⏳ Rate limited - bot will retry automatically');
+            } else {
+                console.log('🔄 Telegram API error - bot will retry automatically');
+            }
+            break;
+            
+        case 'EFATAL':
+        case 'ECONNRESET':
+        case 'ETIMEDOUT':
+        case 'ENOTFOUND':
+        case 'ECONNREFUSED':
+            console.log('🌐 Network error - bot will retry automatically');
+            break;
+            
+        default:
+            console.log('❓ Unknown error - bot will retry automatically');
     }
+});
+
+// Add process handlers for graceful shutdown
+process.on('SIGINT', async () => {
+    console.log('\n🛑 Received SIGINT. Graceful shutdown...');
+    try {
+        await bot.stopPolling();
+        console.log('✅ Bot polling stopped');
+        process.exit(0);
+    } catch (error) {
+        console.error('❌ Error during shutdown:', error.message);
+        process.exit(1);
+    }
+});
+
+process.on('SIGTERM', async () => {
+    console.log('\n🛑 Received SIGTERM. Graceful shutdown...');
+    try {
+        await bot.stopPolling();
+        console.log('✅ Bot polling stopped');
+        process.exit(0);
+    } catch (error) {
+        console.error('❌ Error during shutdown:', error.message);
+        process.exit(1);
+    }
+});
+
+process.on('uncaughtException', (error) => {
+    console.error('❌ Uncaught Exception:', error.message);
+    console.log('🔄 Bot will continue running...');
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+    console.log('🔄 Bot will continue running...');
 });
 
 app.use((error, req, res, next) => {
